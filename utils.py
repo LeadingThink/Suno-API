@@ -67,9 +67,12 @@ async def get_credits(token):
     headers = {"Authorization": f"Bearer {token}"}
     api_url = f"{BASE_URL}/api/billing/info/"
     respose = await fetch(api_url, headers, method="GET")
-    return {
+    print(json.dumps(respose))
+    data = {
         "credits_left": respose['total_credits_left'],
-        "period": respose['period'],
         "monthly_limit": respose['monthly_limit'],
         "monthly_usage": respose['monthly_usage']
     }
+    if "period" in respose:
+        data["period"] = respose['period']
+    return data

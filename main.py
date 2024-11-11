@@ -46,21 +46,25 @@ async def generate(
 async def generate_with_song_description(
     data: schemas.DescriptionModeGenerateParam, token: str = Depends(get_token)
 ):
-    max_retries = len(suno_auth.account_manager.active_accounts)  # 最大重试次数等于活跃账户数
+    max_retries = len(suno_auth.account_manager.active_accounts)
     retry_count = 0
     
     while retry_count < max_retries:
         try:
-            resp = await generate_music(data.dict(), token)
-            if isinstance(resp, dict) and resp.get("detail") == "Insufficient credits.":
-                # 当前账户积分不足，切换到下一个账户
+            # 首先检查账户积分
+            credits_info = await get_credits(token)
+            if credits_info["credits_left"] == 0:
+                # 积分不足，切换到下一个账户
                 suno_auth.handle_insufficient_credits()
-                # 等待token更新完成
-                time.sleep(1)  # 给token更新留出时间
+                time.sleep(1)
                 token = suno_auth.get_token()
                 retry_count += 1
                 continue
+            
+            # 有足够积分，进行生成
+            resp = await generate_music(data.dict(), token)
             return resp
+            
         except Exception as e:
             traceback.print_exc()
             retry_count += 1
@@ -126,6 +130,7 @@ async def fetch_credits(token: str = Depends(get_token)):
         resp = await get_credits(token)
         return resp
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(
             detail=str(e), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
