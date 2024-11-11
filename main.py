@@ -1,6 +1,8 @@
 # -*- coding:utf-8 -*-
 
 import json
+import time
+import traceback
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import schemas
 from deps import get_token
 from utils import generate_lyrics, generate_music, get_feed, get_lyrics, get_credits
+from cookie import suno_auth, start_keep_alive
 
 app = FastAPI()
 
@@ -43,13 +46,38 @@ async def generate(
 async def generate_with_song_description(
     data: schemas.DescriptionModeGenerateParam, token: str = Depends(get_token)
 ):
-    try:
-        resp = await generate_music(data.dict(), token)
-        return resp
-    except Exception as e:
-        raise HTTPException(
-            detail=str(e), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+    max_retries = len(suno_auth.account_manager.active_accounts)  # 最大重试次数等于活跃账户数
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            resp = await generate_music(data.dict(), token)
+            if isinstance(resp, dict) and resp.get("detail") == "Insufficient credits.":
+                # 当前账户积分不足，切换到下一个账户
+                suno_auth.handle_insufficient_credits()
+                # 等待token更新完成
+                time.sleep(1)  # 给token更新留出时间
+                token = suno_auth.get_token()
+                retry_count += 1
+                continue
+            return resp
+        except Exception as e:
+            traceback.print_exc()
+            retry_count += 1
+            if retry_count >= max_retries:
+                raise HTTPException(
+                    detail="All accounts exhausted or error occurred",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            suno_auth.handle_insufficient_credits()
+            time.sleep(1)
+            token = suno_auth.get_token()
+            continue
+    
+    raise HTTPException(
+        detail="All accounts exhausted",
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+    )
 
 
 @app.get("/feed/{aid}")
@@ -101,3 +129,19 @@ async def fetch_credits(token: str = Depends(get_token)):
         raise HTTPException(
             detail=str(e), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@app.on_event("startup")
+async def startup_event():
+    print("Starting application...")
+    # 重新加载账号状态
+    suno_auth.account_manager.load_accounts()
+    suno_auth.account_manager.load_disabled_accounts()
+    suno_auth.account_manager.update_active_accounts()
+    
+    print(f"Loaded {len(suno_auth.account_manager.accounts)} total accounts")
+    print(f"Found {len(suno_auth.account_manager.disabled_accounts)} disabled accounts")
+    print(f"Active accounts: {len(suno_auth.account_manager.active_accounts)}")
+
+    # 启动keep_alive
+    start_keep_alive(suno_auth)
