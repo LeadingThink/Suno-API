@@ -43,6 +43,7 @@ class AccountManager:
             self.disabled_accounts.append(account_email)
             self.update_active_accounts()
             self.save_disabled_accounts()
+            self.current_account_index = 0
 
     def get_next_account(self) -> tuple[str, dict]:
         if not self.active_accounts:
@@ -50,5 +51,7 @@ class AccountManager:
 
         account_email = self.active_accounts[self.current_account_index]
         account_data = self.accounts[account_email]
+
+        self.current_account_index = (self.current_account_index + 1) % len(self.active_accounts)
         
         return account_email, account_data 

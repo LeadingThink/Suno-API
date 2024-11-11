@@ -54,7 +54,7 @@ async def generate_with_song_description(
             # 首先检查账户积分
             credits_info = await get_credits(token)
             if credits_info["credits_left"] == 0:
-                # 积分不足，切换到下一个账户
+                # 积分不足，切换到下一个账户并禁用当前账户
                 suno_auth.handle_insufficient_credits()
                 time.sleep(1)
                 token = suno_auth.get_token()
@@ -63,6 +63,16 @@ async def generate_with_song_description(
             
             # 有足够积分，进行生成
             resp = await generate_music(data.dict(), token)
+            
+            # 检查是否有太多运行中的任务
+            if isinstance(resp, dict) and resp.get("detail") == "Too many running jobs.":
+                # 任务太多时只切换账户，不禁用
+                suno_auth.load_next_account()
+                time.sleep(1)
+                token = suno_auth.get_token()
+                retry_count += 1
+                continue
+                
             return resp
             
         except Exception as e:
